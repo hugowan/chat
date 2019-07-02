@@ -55,6 +55,20 @@ import (
 	_ "github.com/tinode/chat/server/media/s3"
 )
 
+func getWhatsAppTempDir() string {
+	return os.TempDir() + "/whatsapp"
+}
+
+func getCurentTS() int {
+	return int(time.Now().Unix())
+}
+
+func getFileExtension(s string) string {
+	s = strings.Split(s, ";")[0]
+	s = strings.Split(s, "/")[1]
+	return s
+}
+
 const (
 	// idleSessionTimeout defines duration of being idle before terminating a session.
 	idleSessionTimeout = time.Second * 55
@@ -532,6 +546,16 @@ func main() {
 		evpath = config.ExpvarPath
 	}
 	statsInit(mux, evpath)
+
+	/**************************************************/
+
+	// create temp folder for whatsapp media data
+	waTempDir := getWhatsAppTempDir()
+	if _, err := os.Stat(waTempDir); os.IsNotExist(err) {
+		os.Mkdir(waTempDir, 0777)
+	}
+
+	/**************************************************/
 
 	if err = listenAndServe(config.Listen, mux, tlsConfig, signalHandler()); err != nil {
 		log.Fatal(err)
