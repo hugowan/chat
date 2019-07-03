@@ -12,10 +12,10 @@ import (
 	"time"
 
 	ms "github.com/go-sql-driver/mysql"
-	"github.com/jmoiron/sqlx"
 	"github.com/hugowan/chat/server/auth"
 	"github.com/hugowan/chat/server/store"
 	t "github.com/hugowan/chat/server/store/types"
+	"github.com/jmoiron/sqlx"
 )
 
 // adapter holds MySQL connection data.
@@ -2407,6 +2407,10 @@ func extractTags(update map[string]interface{}) []string {
 	}
 
 	return []string(tags)
+}
+
+func (a *adapter) FindWhatsAppMessage(msgId string) ([]t.Message, error) {
+	// TODO:
 }
 
 func init() {

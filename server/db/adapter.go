@@ -163,4 +163,7 @@ type Adapter interface {
 	// unused records with UpdatedAt before olderThan.
 	// Returns array of FileDef.Location of deleted filerecords so actual files can be deleted too.
 	FileDeleteUnused(olderThan time.Time, limit int) ([]string, error)
+
+	// WhatsApp
+	FindWhatsAppMessage(msgId string) ([]t.Message, error)
 }

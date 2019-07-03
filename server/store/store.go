@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/hugowan/chat/server/auth"
-	"github.com/hugowan/chat/server/db"
+	adapter "github.com/hugowan/chat/server/db"
 	"github.com/hugowan/chat/server/media"
 	"github.com/hugowan/chat/server/store/types"
 	"github.com/hugowan/chat/server/validate"
@@ -602,6 +602,13 @@ func (MessagesObjMapper) GetDeleted(topic string, forUser types.Uid, opt *types.
 	ranges = types.RangeSorter(ranges).Normalize()
 
 	return ranges, maxID, nil
+}
+
+func IsWhatsAppMessageExists(msgId string) bool {
+	if msgs, _ := adp.FindWhatsAppMessage(msgId); msgs != nil {
+		return true
+	}
+	return false
 }
 
 // Registered authentication handlers.

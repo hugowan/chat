@@ -11,28 +11,34 @@ package main
 //go:generate protoc --proto_path=../pbx --go_out=plugins=grpc:../pbx ../pbx/model.proto
 
 import (
+	"encoding/gob"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	// For stripping comments from JSON config
 	jcr "github.com/DisposaBoy/JsonConfigReader"
+	"github.com/fatih/color"
 
 	gh "github.com/gorilla/handlers"
-
 	// Authenticators
+
 	"github.com/hugowan/chat/server/auth"
 	_ "github.com/hugowan/chat/server/auth/anon"
 	_ "github.com/hugowan/chat/server/auth/basic"
 	_ "github.com/hugowan/chat/server/auth/rest"
 	_ "github.com/hugowan/chat/server/auth/token"
+	"github.com/hugowan/chat/server/cli"
 
 	// Database backends
 	_ "github.com/hugowan/chat/server/db/mysql"
@@ -53,7 +59,233 @@ import (
 	// File upload handlers
 	_ "github.com/hugowan/chat/server/media/fs"
 	_ "github.com/hugowan/chat/server/media/s3"
+
+	qrcodeTerminal "github.com/Baozisoftware/qrcode-terminal-go"
+	"github.com/Rhymen/go-whatsapp"
 )
+
+var wg sync.WaitGroup
+var mu sync.Mutex
+var bufLength = 10
+var bufTS = int(time.Now().Unix()) + bufLength
+var bufMsg = make(map[int]cli.MsgData)
+
+/**************************************************/
+
+type waHandler struct {
+	c *whatsapp.Conn
+}
+
+func (h *waHandler) HandleError(err error) {
+	if e, ok := err.(*whatsapp.ErrConnectionFailed); ok {
+		log.Printf("Connection failed, underlying error: %v", e.Err)
+		log.Println("Waiting 30sec...")
+		<-time.After(30 * time.Second)
+		log.Println("Reconnecting...")
+		err := h.c.Restore()
+		if err != nil {
+			log.Fatalf("Restore failed: %v", err)
+		}
+	} else {
+		log.Printf("error occoured: %v\n", err)
+	}
+}
+
+func (*waHandler) HandleTextMessage(message whatsapp.TextMessage) {
+	sender, receiver, ok := handleWhatsAppMessage(message.Info)
+
+	if ok {
+		msgData := cli.MsgData{
+			Id:          message.Info.Id,
+			SenderTel:   sender,
+			ReceiverTel: receiver,
+			Content:     message.Text,
+			MimeType:    "",
+		}
+
+		if bufTS > getCurentTS() {
+			color.Yellow("put to buffer")
+			bufMsg[int(message.Info.Timestamp)] = msgData
+		} else {
+			color.Yellow("put to tinode")
+			cli.SendMessage(msgData)
+		}
+	}
+}
+
+func (*waHandler) HandleImageMessage(message whatsapp.ImageMessage) {
+	sender, receiver, ok := handleWhatsAppMessage(message.Info)
+
+	if ok {
+		// download whatsapp media data
+		data, err := message.Download()
+		if err != nil {
+			return
+		}
+
+		// save as physical file
+		filepath := fmt.Sprintf("%v/%v.%v", getWhatsAppTempDir(), message.Info.Id, getFileExtension(message.Type))
+		file, err := os.Create(filepath)
+		if err != nil {
+			return
+		}
+		defer file.Close()
+
+		_, err = file.Write(data)
+		if err != nil {
+			return
+		}
+
+		msgData := cli.MsgData{
+			Id:          message.Info.Id,
+			SenderTel:   sender,
+			ReceiverTel: receiver,
+			Content:     filepath,
+			MimeType:    message.Type,
+		}
+
+		if bufTS > getCurentTS() {
+			color.Yellow("put to buffer")
+			bufMsg[int(message.Info.Timestamp)] = msgData
+		} else {
+			color.Yellow("put to tinode")
+			cli.SendMessage(msgData)
+		}
+	}
+}
+
+func (*waHandler) HandleAudioMessage(message whatsapp.AudioMessage) {
+	sender, receiver, ok := handleWhatsAppMessage(message.Info)
+
+	if ok {
+		// download whatsapp media data
+		data, err := message.Download()
+		if err != nil {
+			return
+		}
+
+		// save as physical file
+		filepath := fmt.Sprintf("%v/%v.%v", getWhatsAppTempDir(), message.Info.Id, getFileExtension(message.Type))
+		file, err := os.Create(filepath)
+		if err != nil {
+			return
+		}
+		defer file.Close()
+
+		_, err = file.Write(data)
+		if err != nil {
+			return
+		}
+
+		msgData := cli.MsgData{
+			Id:          message.Info.Id,
+			SenderTel:   sender,
+			ReceiverTel: receiver,
+			Content:     filepath,
+			MimeType:    message.Type,
+		}
+
+		if bufTS > getCurentTS() {
+			color.Yellow("put to buffer")
+			bufMsg[int(message.Info.Timestamp)] = msgData
+		} else {
+			color.Yellow("put to tinode")
+			cli.SendMessage(msgData)
+		}
+	}
+}
+
+func handleWhatsAppMessage(info whatsapp.MessageInfo) (string, string, bool) {
+	remoteJid := strings.Split(info.RemoteJid, "@")
+
+	// do not handle group message
+	if remoteJid[1] == "g.us" {
+		return "", "", false
+	}
+
+	// check whatsapp message exists in tindoe already
+	if ok := store.IsWhatsAppMessageExists(info.Id); ok {
+		return "", "", false
+	}
+
+	if remoteJid[0] == "14155238886" {
+		var sender, receiver string
+		if info.FromMe == true {
+			// send from master
+			sender = cli.MasterTel
+			receiver = remoteJid[0]
+		} else {
+			// send to master
+			sender = remoteJid[0]
+			receiver = cli.MasterTel
+		}
+		return sender, receiver, true
+	}
+	return "", "", false
+}
+
+/**************************************************/
+
+func login(wac *whatsapp.Conn) error {
+	//load saved session
+	session, err := readSession()
+	if err == nil {
+		//restore session
+		session, err = wac.RestoreWithSession(session)
+		if err != nil {
+			return fmt.Errorf("restoring failed: %v\n", err)
+		}
+	} else {
+		//no saved session -> regular login
+		qr := make(chan string)
+		go func() {
+			terminal := qrcodeTerminal.New()
+			terminal.Get(<-qr).Print()
+		}()
+		session, err = wac.Login(qr)
+		if err != nil {
+			return fmt.Errorf("error during login: %v\n", err)
+		}
+	}
+
+	//save session
+	err = writeSession(session)
+	if err != nil {
+		return fmt.Errorf("error saving session: %v\n", err)
+	}
+	return nil
+}
+
+func readSession() (whatsapp.Session, error) {
+	session := whatsapp.Session{}
+	file, err := os.Open(os.TempDir() + "/whatsappSession.gob")
+	if err != nil {
+		return session, err
+	}
+	defer file.Close()
+	decoder := gob.NewDecoder(file)
+	err = decoder.Decode(&session)
+	if err != nil {
+		return session, err
+	}
+	return session, nil
+}
+
+func writeSession(session whatsapp.Session) error {
+	file, err := os.Create(os.TempDir() + "/whatsappSession.gob")
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	encoder := gob.NewEncoder(file)
+	err = encoder.Encode(session)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+/**************************************************/
 
 func getWhatsAppTempDir() string {
 	return os.TempDir() + "/whatsapp"
@@ -68,6 +300,8 @@ func getFileExtension(s string) string {
 	s = strings.Split(s, "/")[1]
 	return s
 }
+
+/**************************************************/
 
 const (
 	// idleSessionTimeout defines duration of being idle before terminating a session.
@@ -124,6 +358,9 @@ type credValidator struct {
 }
 
 var globals struct {
+	// WhatsApp
+	wac *whatsapp.Conn
+
 	// Topics cache and processing.
 	hub *Hub
 	// Sessions cache.
@@ -553,6 +790,40 @@ func main() {
 	waTempDir := getWhatsAppTempDir()
 	if _, err := os.Stat(waTempDir); os.IsNotExist(err) {
 		os.Mkdir(waTempDir, 0777)
+	}
+
+	// TODO: clear temp folder
+
+	// create new WhatsApp connection
+	globals.wac, err = whatsapp.NewConn(5 * time.Second)
+	if err != nil {
+		log.Fatalf("error creating connection: %v\n", err)
+	}
+
+	// Add handler
+	globals.wac.AddHandler(&waHandler{globals.wac})
+
+	// login or restore
+	if err := login(globals.wac); err != nil {
+		log.Fatalf("error logging in: %v\n", err)
+	}
+
+	/**************************************************/
+
+	time.Sleep(time.Duration(bufLength) * time.Second)
+
+	// sort message by timestamp
+	var bufSeq []int
+	for k := range bufMsg {
+		bufSeq = append(bufSeq, k)
+	}
+	sort.Ints(bufSeq)
+
+	// save buffer to tinode
+	for _, k := range bufSeq {
+		msgData := bufMsg[k]
+		fmt.Printf("%+v\n", msgData)
+		cli.SendMessage(msgData)
 	}
 
 	/**************************************************/

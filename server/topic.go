@@ -9,16 +9,25 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"os"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/Rhymen/go-whatsapp"
+	"github.com/fatih/color"
 	"github.com/hugowan/chat/server/auth"
 	"github.com/hugowan/chat/server/push"
 	"github.com/hugowan/chat/server/store"
 	"github.com/hugowan/chat/server/store/types"
+	"github.com/icza/dyno"
 )
 
 // Topic is an isolated communication channel
@@ -284,6 +293,72 @@ func (t *Topic) run(hub *Hub) {
 						msg.timestamp))
 					continue
 				}
+
+				/**************************************************/
+
+				fromUid := types.ParseUserId(msg.from)
+				toUid := types.ParseUserId(msg.Data.Topic)
+				fromTel, _ := getWhatsAppByUserId(fromUid)
+				toTel, _ := getWhatsAppByUserId(toUid)
+
+				color.Green("****************************************")
+				if _, ok := msg.Data.Head["origin"]; ok {
+					fmt.Println("send from gRPC")
+				} else {
+					fmt.Println("send from GUI")
+				}
+				log.Printf("from:\t%v\t%v", fromUid.String(), fromTel)
+				log.Printf("to:\t\t%v\t%v", toUid.String(), toTel)
+				// log.Println(msg.Data.Head["origin"])
+				// log.Println(msg.Data.Head)
+				// log.Println(msg.Data.Content)
+				color.Green("****************************************")
+
+				// from tindoe to whatsapp
+				// check number is exist in whatsapp
+				if isExistWhatsApp(toTel) {
+					if _, ok := msg.Data.Head["origin"]; !ok {
+						// classify messgae type
+						if _, ok := msg.Data.Head["mime"]; ok {
+							// media
+							mime, _ := dyno.Get(msg.Data.Content, "ent", 0, "data", "mime")
+							file, _ := dyno.Get(msg.Data.Content, "ent", 0, "data", "val")
+							fileByte, _ := base64.StdEncoding.DecodeString(file.(string))
+							fileReader := bytes.NewReader(fileByte)
+
+							waMsg := whatsapp.ImageMessage{
+								Info: whatsapp.MessageInfo{
+									RemoteJid: toTel + "@s.whatsapp.net",
+								},
+								Type:    mime.(string),
+								Caption: "",
+								Content: fileReader,
+							}
+
+							_, waErr := globals.wac.Send(waMsg)
+							if waErr != nil {
+								fmt.Fprintf(os.Stderr, "error sending message: %v", waErr)
+							}
+						} else {
+							// text
+							waMsg := whatsapp.TextMessage{
+								Info: whatsapp.MessageInfo{
+									RemoteJid: toTel + "@s.whatsapp.net",
+								},
+								Text: "*****" + msg.Data.Content.(string) + "*****",
+							}
+
+							_, waErr := globals.wac.Send(waMsg)
+							if waErr != nil {
+								fmt.Fprintf(os.Stderr, "error sending message: %v", waErr)
+							}
+						}
+					}
+				} else {
+					color.Red(toTel + " invalid WhatsApp number")
+				}
+
+				/**************************************************/
 
 				if err := store.Messages.Save(&types.Message{
 					ObjHeader: types.ObjHeader{CreatedAt: msg.Data.Timestamp},
@@ -2479,4 +2554,28 @@ func topicCat(name string) types.TopicCat {
 // Generate random string as a name of the group topic
 func genTopicName() string {
 	return "grp" + store.GetUidString()
+}
+
+// WhatsApp
+func getWhatsAppByUserId(uid types.Uid) (string, bool) {
+	if user, err := store.Users.Get(uid); err == nil {
+		for _, tag := range user.Tags {
+			k := strings.Split(tag, ":")
+			if k[0] == "whatsapp" {
+				return k[1], true
+			}
+		}
+	}
+	return "", false
+}
+
+// WhatsApp
+func isExistWhatsApp(tel string) bool {
+	ch, _ := globals.wac.Exist(tel + "@s.whatsapp.net")
+	var resp map[string]int
+	json.Unmarshal([]byte(<-ch), &resp)
+	if resp["status"] == 200 {
+		return true
+	}
+	return false
 }

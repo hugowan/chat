@@ -33,7 +33,8 @@ const (
 	MasterUsername string = "85251966260"
 	MasterTel      string = "85251966260"
 
-	DefaultPassword string = "XCf5mcQqqTJ4N8kx"
+	// DefaultPassword string = "XCf5mcQqqTJ4N8kx"
+	DefaultPassword string = "000000"
 )
 
 var globals struct {
@@ -478,4 +479,3 @@ func inlineImage(m MsgData) map[string]interface{} {
 
 	return content
 }
-

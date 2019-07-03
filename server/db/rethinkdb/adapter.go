@@ -1964,6 +1964,22 @@ func (a *adapter) fileDecrementUseCounter(msgQuery rdb.Term) error {
 	return err
 }
 
+// WhatsApp - Find WhatsApp message by msgId
+func (a *adapter) FindWhatsAppMessage(msgId string) ([]t.Message, error) {
+	cursor, err := rdb.DB(a.dbName).Table("messages").Filter(rdb.Row.Field("Head").Field("origin-message-id").Eq(msgId)).Run(a.conn)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close()
+
+	var msgs []t.Message
+	if err = cursor.All(&msgs); err != nil {
+		return nil, err
+	}
+
+	return msgs, nil
+}
+
 func init() {
 	store.RegisterAdapter(adapterName, &adapter{})
 }
