@@ -18,9 +18,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 
-	"github.com/tinode/chat/server/media"
-	"github.com/tinode/chat/server/store"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/hugowan/chat/server/media"
+	"github.com/hugowan/chat/server/store"
+	"github.com/hugowan/chat/server/store/types"
 )
 
 const (

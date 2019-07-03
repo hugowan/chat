@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tinode/chat/server/auth"
-	"github.com/tinode/chat/server/store"
-	"github.com/tinode/chat/server/store/types"
+	"github.com/hugowan/chat/server/auth"
+	"github.com/hugowan/chat/server/store"
+	"github.com/hugowan/chat/server/store/types"
 )
 
 // authenticator is the type to map authentication methods to.

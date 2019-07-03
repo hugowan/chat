@@ -1,8 +1,8 @@
 package tel
 
 import (
-	"github.com/tinode/chat/server/store"
-	t "github.com/tinode/chat/server/store/types"
+	"github.com/hugowan/chat/server/store"
+	t "github.com/hugowan/chat/server/store/types"
 )
 
 // Empty placeholder struct.
